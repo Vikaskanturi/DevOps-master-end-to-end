@@ -63,7 +63,7 @@
 
     - name: Configure the CNI using Calico
       shell:
-        cmd: kubectl apply -f https://raw.githubusercontent.com/sudhanshuvlog/kubernetes-multinode-cluster-ansible-aws/main/calico.yaml
+        cmd: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.2/manifests/calico.yaml
       when: kubectl_status.failed
 
     - name: Generate join command
