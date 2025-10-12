@@ -45,7 +45,7 @@ My recorded session for this project is uploaded on GeeksForGeeks - https://www.
 - Provide AWS credentials on the Jenkins slave node using _#awS configure_ or store them in Jenkins secrets, and then further add a step in `Jenkinsfile` to configure AWS credentials automatically. Terraform will use these credentials.
 
 ### Step 8 Run the Pipeline
-- Trigger the pipeline in Jenkins and ensure all steps are executed correctly.
+- Trigger the pipeline in Jenkins With Parameters and ensure all steps are executed correctly.
 
 ### Step 9 Make Changes and Test
 - Make changes in your code locally, push to GitHub, and create a pull request.
@@ -60,10 +60,13 @@ My recorded session for this project is uploaded on GeeksForGeeks - https://www.
 - Configure multi node k8s cluster on the created infrastructure
 - Configure Monitoring Tool
 - Deploy the Webserver
+- Promote to QA
+- Promote to PROD
 - ![Jenkins Pipeline Stage View](Screenshots/jenkinspipeline.png)
 
 ### Step 11: Access the Deployed Webserver
-- Visit http://<your-K8sNode-ip>:8080 to see the deployed webserver.
+- Visit http://<your-K8sNode-ip>:NodePort to see the deployed webserver.
+- Webserver will be deployed in respective namespace, like dev, qa, prod
 
 
 ### Step 12 Create Grafana Dashboard: 
