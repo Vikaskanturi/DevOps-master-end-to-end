@@ -1,11 +1,37 @@
----
 - name: Install Helm and Prometheus
   hosts: k8s-master  # Run tasks on all hosts
   become: true  # Run tasks with sudo
+  collections:
+    - community.kubernetes
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
 
   tasks:
-    - name: Download Helm
-      get_url:
+    - name: Ensure community.kubernetes collection is installed on controller (best-effort)
+      delegate_to: localhost
+      become: false
+      ansible.builtin.command: ansible-galaxy collection install community.kubernetes
+      changed_when: false
+      failed_when: false
+
+    - name: Ensure socat is installed
+      ansible.builtin.package:
+        name: socat
+        state: present
+
+    - name: Ensure python3-pip is installed (so we can pip-install kubernetes client)
+      ansible.builtin.package:
+        name: python3-pip
+        state: present
+
+    - name: Install Python kubernetes client via pip3
+      ansible.builtin.pip:
+        name: kubernetes
+        executable: pip3
+      become: true
+
+    - name: Download Helm on remote master
+      ansible.builtin.get_url:
         url: https://get.helm.sh/helm-v3.7.1-linux-amd64.tar.gz
         dest: /tmp/helm-v3.7.1-linux-amd64.tar.gz
 
@@ -21,13 +47,14 @@
         remote_src: yes
 
     - name: Move Helm to /bin
-      command: sudo mv /tmp/helm/linux-amd64/helm /bin/helm
+      ansible.builtin.command: mv /tmp/helm/linux-amd64/helm /bin/helm
+      become: true
 
     - name: Check Helm version
-      command: helm version
-    
-    - name: Copy the k8s pv files to Target Node
-      copy:
+      ansible.builtin.command: helm version
+
+    - name: Copy the k8s pv files to target node
+      ansible.builtin.copy:
         src: "{{ item }}"
         dest: "/{{ item | basename }}"
       loop:
@@ -35,46 +62,93 @@
         - ../prometheus-server1pv.yml
         - ../prometheus-serverpv.yml
 
-    - name: Make the deployments
-      command: "kubectl apply -f {{ item }}"
+    - name: Create namespace monitoring
+      ansible.builtin.command: kubectl create namespace monitoring
+      ignore_errors: true
+
+
+    - name: Make the deployments with kubectl
+      ansible.builtin.command: "kubectl apply -f {{ item }}"
       loop:
         - permissions-pv.yml
         - prometheus-server1pv.yml
         - prometheus-serverpv.yml
       args:
-        chdir: / 
+        chdir: /
 
     - name: Add Prometheus Helm repository
-      command: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      ansible.builtin.command: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 
     - name: Update Helm repositories
-      command: helm repo update
+      ansible.builtin.command: helm repo update
 
-    - name: Install Prometheus using Helm
-      command: helm install prometheus prometheus-community/prometheus
-      ignore_errors: yes
+    - name: Install or upgrade Prometheus using Helm (non-blocking, retry on concurrent ops)
+      ansible.builtin.command: >-
+        helm upgrade --install prometheus prometheus-community/prometheus
+        --namespace monitoring --create-namespace
+      register: prometheus_release
+      retries: 8
+      delay: 10
+      until: prometheus_release.rc == 0
 
-    - name: Expose Prometheus service using kubectl
-      command: kubectl expose service prometheus-server --type=NodePort --target-port=9090 --name=prometheus-server-ext --port=9090
-      ignore_errors: yes
-
-    - name: Install socat
-      ansible.builtin.package:
-        name: socat
-        state: present
+    - name: Expose Prometheus service using kubectl in monitoring namespace
+      ansible.builtin.command: kubectl -n monitoring expose service prometheus-server --type=NodePort --target-port=9090 --name=prometheus-server-ext --port=9090
+      ignore_errors: true
 
     - name: Update Helm repositories for Grafana
-      command: helm repo update
+      ansible.builtin.command: helm repo update
       ignore_errors: yes
 
-    - name: Add Help Repo for Grafana
-      command: helm repo add grafana https://grafana.github.io/helm-charts 
+    - name: Add Helm repo for Grafana
+      ansible.builtin.command: helm repo add grafana https://grafana.github.io/helm-charts
       ignore_errors: yes
 
-    - name: Install Grafana using Helm
-      command: helm install grafana grafana/grafana
-      ignore_errors: yes
+    - name: Install or upgrade Grafana using Helm (non-blocking, retry on concurrent ops)
+      ansible.builtin.command: >-
+        helm upgrade --install grafana grafana/grafana
+        --namespace monitoring --create-namespace
+      register: grafana_release
+      retries: 8
+      delay: 10
+      until: grafana_release.rc == 0
 
-    - name: Expose Grafana service using kubectl
-      command: kubectl expose service grafana --type=NodePort --target-port=3000 --name=grafana-ext --port=9090
-      ignore_errors: yes
+    - name: Expose Grafana service using kubectl in monitoring namespace
+      ansible.builtin.command: kubectl -n monitoring expose service grafana --type=NodePort --target-port=3000 --name=grafana-ext --port=3000
+      ignore_errors: true
+
+    - name: Ensure prometheus service is present and exposed (NodePort)
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: prometheus-server-ext
+            namespace: monitoring
+          spec:
+            selector:
+              app: prometheus
+            type: NodePort
+            ports:
+              - port: 9090
+                targetPort: 9090
+      register: prometheus_svc
+      failed_when: false
+
+    - name: Ensure grafana service exposed (NodePort)
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: grafana-ext
+            namespace: monitoring
+          spec:
+            selector:
+              app.kubernetes.io/name: grafana
+            type: NodePort
+            ports:
+              - port: 3000
+                targetPort: 3000
+      failed_when: false

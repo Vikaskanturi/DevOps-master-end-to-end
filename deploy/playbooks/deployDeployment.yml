@@ -1,37 +1,76 @@
-- name: Run Command Playbook
+---
+- name: Deploy or update GFG application
   hosts: k8s-master
-  become: true  # Run tasks with sudo
+  become: true
+
+  vars:
+    app_name: "{{ app_name | default('gfgdeployment') }}"
+    namespace: "{{ namespace | default('default') }}"
+    manifest_file: /tmp/deployment.yaml
 
   tasks:
-    - name: Copy the deploment.yml file to Target Node
+
+    - name: Ensure target namespace exists
+      ansible.builtin.shell: |
+        kubectl create namespace {{ namespace }} --dry-run=client -o yaml | kubectl apply -f -
+      args:
+        executable: /bin/bash
+      register: ns_result
+
+    - name: Copy Kubernetes deployment manifest
       copy:
-        src: ../deployment.yml
-        dest: deployment.yml
-    - name: Copy the script to the Target Node
+        src: ../deployment.yaml
+        dest: "{{ manifest_file }}"
+        remote_src: no
+
+    - name: Replace namespace placeholder in manifest
+      ansible.builtin.replace:
+        path: "{{ manifest_file }}"
+        regexp: 'namespace:.*'
+        replace: "namespace: {{ namespace }}"
+      ignore_errors: true
+
+    - name: Copy startservers.sh script
       copy:
         src: ../startservers.sh
-        dest: startservers.sh
-    - name: Check if Deployment exists
-      command: "kubectl get deployment gfgdeployment"
-      ignore_errors: true
+        dest: /tmp/startservers.sh
+        mode: '0755'
+        remote_src: no
+
+    - name: Check if deployment exists
+      command: "kubectl get deployment {{ app_name }} -n {{ namespace }}"
       register: deployment_check
-
-    - name: Run Deployment or Rollout
-      command: "kubectl create -f deployment.yml"
-      when: deployment_check.rc != 0  # Deployment doesn't exist
       ignore_errors: true
 
-    - name: Rollout Deployment
-      command: "kubectl rollout restart deployment gfgdeployment"
-      when: deployment_check.rc == 0  # Deployment exists
+    - name: Create deployment and service if not present
+      command: "kubectl create -f {{ manifest_file }} -n {{ namespace }}"
+      when: deployment_check.rc != 0
+      register: create_result
       ignore_errors: true
-      
-    - name: "Get the third IP address"
-      shell: hostname -I | awk '{print $3}'
-      register: third_ip
 
-    # - name: "Run socat"
-    #   shell: nohup socat TCP4-LISTEN:8080,fork,su=nobody TCP4:{{ third_ip.stdout }}:31933
-    #   async: 1
-    #   poll: 0
-    #   ignore_errors: true
+    - name: Rollout restart deployment if already exists
+      command: "kubectl rollout restart deployment {{ app_name }} -n {{ namespace }}"
+      when: deployment_check.rc == 0
+      register: rollout_result
+      ignore_errors: true
+
+    - name: Ensure service is created or updated
+      command: "kubectl apply -f {{ manifest_file }} -n {{ namespace }}"
+      register: service_apply
+      ignore_errors: true
+
+    - name: Get deployment and service status
+      command: "kubectl get deploy,svc -n {{ namespace }}"
+      register: k8s_status
+
+    - name: Show deployment and service status
+      debug:
+        msg: "{{ k8s_status.stdout_lines }}"
+
+    - name: Show running pods
+      command: "kubectl get pods -o wide -n {{ namespace }}"
+      register: pods_output
+
+    - name: Print pod status
+      debug:
+        msg: "{{ pods_output.stdout_lines }}"

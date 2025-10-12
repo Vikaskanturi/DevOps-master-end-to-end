@@ -1,71 +1,173 @@
 pipeline {
-    agent {label "ec2"}
-    stages {
+    agent { label 'ec2' }
 
-        stage("Setup Ansible"){
-            steps{
-                echo "Testing was already done succesfully via Github Workflows"
-                sh "yum install ansible -y"
-                echo "Ansible Installed"
+    parameters {
+        choice(name: 'ENVIRONMENT', choices: ['dev', 'qa', 'prod'], description: 'Select target environment namespace')
+    }
+
+    environment {
+        TERRAFORM_DIR = './deploy/terraformscripts'
+        ANSIBLE_DIR   = './deploy/playbooks'
+    }
+
+    options {
+        timestamps()
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Prepare Tools') {
+            steps {
+                                echo 'Ensure ansible and terraform are available on the agent (will install terraform if missing)'
+                                sh '''#!/bin/bash -l
+                                set -e
+                                # Install Terraform if missing
+                                if ! command -v terraform >/dev/null 2>&1; then
+                                    echo "Terraform not found, installing..."
+                                    TF_VERSION=1.6.0
+                                    TF_ZIP="terraform_${TF_VERSION}_linux_amd64.zip"
+                                    if [ ! -f "${TF_ZIP}" ]; then
+                                        wget "https://releases.hashicorp.com/terraform/${TF_VERSION}/${TF_ZIP}"
+                                    fi
+                                    unzip -o "${TF_ZIP}"
+                                    sudo mv -f terraform /usr/local/bin/terraform
+                                    rm -f "${TF_ZIP}"
+                                else
+                                    echo "Terraform already installed: $(terraform --version | head -n1)"
+                                fi
+
+                                # Ensure ansible is present (best-effort installation)
+                                if ! command -v ansible-playbook >/dev/null 2>&1; then
+                                    echo "Ansible not found, attempting to install..."
+                                    sudo yum install -y ansible || echo 'yum install ansible failed'
+                                else
+                                    echo "Ansible already installed: $(ansible --version | head -n1)"
+                                fi
+
+                                terraform --version || true
+                                ansible --version || true
+                                '''
+            }
         }
+
+        stage('Terraform: Init & Validate') {
+            steps {
+                dir("${TERRAFORM_DIR}") {
+                    sh 'terraform init -input=false'
+                    sh 'terraform fmt -check || terraform fmt'
+                    sh 'terraform validate || true'
+                }
+            }
         }
-        stage("Setup Terraform"){
-            steps{
-                script {
-                    if (!fileExists('terraform_1.6.0_linux_amd64.zip')) {
-                        sh 'wget https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip'
-                        sh "unzip terraform_1.6.0_linux_amd64.zip"
-                        sh "mv terraform /usr/local/bin/"
-                    } else {
-                        echo 'Terraform zip file already exists. Skipping download.'
+
+        stage('Terraform: Plan & Apply') {
+            steps {
+                dir("${TERRAFORM_DIR}") {
+                    withEnv(["TF_IN_AUTOMATION=1"]) {
+                        sh 'terraform plan -out=tfplan -input=false || true'
+                        sh 'terraform apply -input=false -auto-approve tfplan'
                     }
                 }
-            sh "terraform --version"
             }
         }
-        stage("Create Infrastructure for PROD"){
-            steps{
-            sh "terraform  -chdir=./deploy/terraformscripts init"
-            sh "terraform -chdir=./deploy/terraformscripts apply --auto-approve"
-            sh "sleep 30" //giving some time for infrastructure to be up and running..
-            sh "pwd"
-            sh "cp ./deploy/terraformscripts/inventory ./deploy/playbooks/inventory"
-            echo "Infrastructure is up and running.."
+
+        stage('Sync Inventory') {
+            steps {
+                dir("${TERRAFORM_DIR}") {
+                    script {
+                        if (fileExists('inventory')) {
+                            sh 'cp inventory ../playbooks/inventory'
+                            echo 'Inventory copied to playbooks'
+                        } else {
+                            echo 'No inventory found in terraform dir; skipping copy.'
+                        }
+                    }
+                }
             }
         }
-        stage("Configure k8s cluster on the created infrastructure") {
-            environment {
-                ANSIBLE_DIR = './deploy/playbooks' // Adjust this to the directory containing your ansible.cfg
-            }
+
+        stage('Configure Kubernetes') {
             steps {
                 dir("${ANSIBLE_DIR}") {
-                    sh "chmod 400 mykey"
-                    sh "ansible-playbook rhel_common.yaml"
-                    sh "ansible-playbook rhel_master.yaml"
-                    echo "K8s Multi cluster configured successfully!"
+                    withCredentials([file(credentialsId: 'ssh-private-key', variable: 'SSH_KEY')]) {
+                        sh 'cp ${SSH_KEY} ./gfg37ansible.pem && chmod 400 gfg37ansible.pem'
+                        sh 'sleep 30' // Wait for instances to be ready
+                        sh 'ansible-playbook -i inventory rhel_common.yaml'
+                        sh 'ansible-playbook -i inventory rhel_master.yaml'
+                    }
                 }
             }
         }
-        stage("Configure Monitoring Tool"){
-            environment {
-                ANSIBLE_DIR = './deploy/playbooks' // Adjust this to the directory containing your ansible.cfg
-            }
-            steps{
-                dir("${ANSIBLE_DIR}") {
-                sh "ansible-playbook prometheus-grafana.yml"
-                echo "Monitoring tool configured succesfully!"
+
+        stage('Deploy & Monitoring (parallel)') {
+            parallel {
+                stage('Monitoring') {
+                    steps {
+                        dir("${ANSIBLE_DIR}") {
+                            sh 'ansible-playbook -i inventory prometheus-grafana.yml'
+                        }
+                    }
+                }
+                stage('Application Deploy') {
+                    steps {
+                        dir("${ANSIBLE_DIR}") {
+                            script {
+                                echo "Deploying to ${params.ENVIRONMENT} environment..."
+                                sh """
+                                    ansible-playbook -i inventory deployDeployment.yml \
+                                    --extra-vars "namespace=${params.ENVIRONMENT} app_name=gfgdeployment"
+                                """
+                            }
+                        }
+                    }
                 }
             }
         }
-        stage("Deploy the Webserver"){
-            environment {
-                ANSIBLE_DIR = './deploy/playbooks' // Adjust this to the directory containing your ansible.cfg
+
+       // Environment Promotion Flow
+        stage('Promote to QA') {
+            steps {
+                script {
+                    timeout(time: 2, unit: 'MINUTES') {  //Auto abort after 2 minutes
+                    input message: "Proceed with deployment to QA?", ok: "Deploy QA"
+                    }
+                    dir("${ANSIBLE_DIR}") {
+                        sh """
+                            ansible-playbook -i inventory deployDeployment.yml \
+                            --extra-vars "namespace=qa app_name=gfgdeployment"
+                        """
+                    }
+                }
             }
-            steps{
-                dir("${ANSIBLE_DIR}") {
-                sh "ansible-playbook deployDeployment.yml"
+        }
+
+        stage('Promote to PROD') {
+            steps {
+                script {
+                    timeout(time: 2, unit: 'MINUTES') { // Auto abort after 2 minutes
+                    input message: "Promote to PROD environment?", ok: "Deploy PROD"
+                    }
+                    dir("${ANSIBLE_DIR}") {
+                        sh """
+                            ansible-playbook -i inventory deployDeployment.yml \
+                            --extra-vars "namespace=prod app_name=gfgdeployment"
+                        """
+                    }
+                }
             }
-            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline finished'
+            archiveArtifacts artifacts: 'deploy/terraformscripts/*.tfstate, deploy/terraformscripts/inventory', allowEmptyArchive: true
+        }
+        success {
+            echo "Deployment successful to ${params.ENVIRONMENT} environment"
+        }
+        failure {
+            echo "Deployment failed for ${params.ENVIRONMENT} environment"
         }
     }
 }
