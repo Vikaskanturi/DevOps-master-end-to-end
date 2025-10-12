@@ -63,21 +63,10 @@ My recorded session for this project is uploaded on GeeksForGeeks - https://www.
 - ![Jenkins Pipeline Stage View](Screenshots/jenkinspipeline.png)
 
 ### Step 11: Access the Deployed Webserver
-- Visit http://<your-Prodserver-ip>:8080 to see the deployed webserver.
+- Visit http://<your-K8sNode-ip>:8080 to see the deployed webserver.
 
-### Step 12 Create a Socat for Prometheus and Grafana to access them from the internet: 
-- Prometheus and Grafana servers are running they have been exposed also to the base system, but this k8s cluster we have created on AWS, So if you want to connect to these servers from the Internet(outside of your ec2 instance) you can create an extra socket(for my app webserver, I already did it with a shell script named `startservers.sh`) Simarly you can do for Prometheus and Grafana.
-- `#sudo minikube service prometheus-server-ext` This command will show you on which NodePort this Server is been exposed.
-- `#sudo socat TCP4-LISTEN:9090,fork,su=nobody TCP4:<minikube IP>:<Node Port> &` Now we have created a socket, So you can use the public IP of your ec2 server and access the Prometheus dashboard at port no 9090
 
-Simarly we can do for Grafana
-
-- `#sudo minikube service grafana-ext` - Get the NodePort
-- `#sudo socat TCP4-LISTEN:3000,fork,su=nobody TCP4:<minikube IP>:<Node Port> &`
-
-Get the Grafana dashboard at port no 3000 on your server
-
-### Step 13 Create Grafana Dashboard: 
+### Step 12 Create Grafana Dashboard: 
 - Got to Grafana server - http://<your-Prodserver-ip>:3000
 - Add the Prometheus datasource to grafana
 - Visit [View Pre-Created Grafan Dashbords](https://grafana.com/grafana/dashboards/) to select a pre-created dashboard for monitoring the k8s server, you can copy that dashboard ID, and instead of creating the dashboard from scratch we can import a pre-created dashboard.
