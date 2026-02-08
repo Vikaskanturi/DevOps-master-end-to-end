@@ -30,13 +30,6 @@
         replace: "namespace: {{ namespace }}"
       ignore_errors: true
 
-    - name: Copy startservers.sh script
-      copy:
-        src: ../startservers.sh
-        dest: /tmp/startservers.sh
-        mode: '0755'
-        remote_src: no
-
     - name: Check if deployment exists
       command: "kubectl get deployment {{ app_name }} -n {{ namespace }}"
       register: deployment_check
