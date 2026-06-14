@@ -3,8 +3,8 @@ terraform {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 6.50"
-    },
-     null = {
+    }
+    null = {
       source  = "hashicorp/null"
       version = "3.3.0"
     }
