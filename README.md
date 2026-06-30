@@ -85,7 +85,7 @@ Fork this repository to your own GitHub account and make any project-specific cu
 4. Access Jenkins at `http://<instance_public_ip>:8080`, complete the setup wizard, and install the suggested plugins.
 ### 3. Configure the Jenkins Worker Node
  
-Launch a second EC2 instance and configure it as a Jenkins worker (agent) node by following the steps in [`JenkinsSlaveEc2Node`](./JenkinsSlaveEc2Node).
+Launch a second EC2 instance and configure it as a Jenkins worker (agent) node by following the steps in [`JenkinsSlaveEc2Node`](./JenkinsSlaveEC2Node).
  
 ### 4. Create the Jenkins Pipeline
  
