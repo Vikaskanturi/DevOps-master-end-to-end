@@ -61,10 +61,10 @@ resource "null_resource" "configureAnsibleInventory" {
     command = <<EOT
 cat > inventory <<INV
 [k8s-master]
-${aws_instance.web[0].public_ip} ansible_user=ec2-user ansible_ssh_private_key_file=${path.module}/../playbooks/gfg37ansible.pem
+${aws_instance.web[0].public_ip} ansible_user=ec2-user ansible_ssh_private_key_file=${path.module}/../playbooks/windows_key.pem
 
 [k8s-workers]
-${join("\n", [for ip in aws_instance.web[*].public_ip : "${ip} ansible_user=ec2-user ansible_ssh_private_key_file=${path.module}/../playbooks/gfg37ansible.pem" if ip != aws_instance.web[0].public_ip])}
+${join("\n", [for ip in aws_instance.web[*].public_ip : "${ip} ansible_user=ec2-user ansible_ssh_private_key_file=${path.module}/../playbooks/windows_key.pem" if ip != aws_instance.web[0].public_ip])}
 INV
 EOT
     interpreter = ["/bin/bash", "-c"]
