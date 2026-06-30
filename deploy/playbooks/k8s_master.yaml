@@ -20,13 +20,14 @@
         --pod-network-cidr=192.168.0.0/16
         --node-name={{ node_name }}
       when: not kubeadm_conf.stat.exists
+      register: kubeadm_init
 
     - name: Setup kubeconfig
       shell: |
         mkdir -p $HOME/.kube
         cp /etc/kubernetes/admin.conf $HOME/.kube/config
         chown $(id -u):$(id -g) $HOME/.kube/config
-      when: kubeadm_conf.stat.exists or kubeadm_conf is changed
+      when: kubeadm_conf.stat.exists or (kubeadm_init is defined and kubeadm_init.changed)
 
     - name: Install Calico (only once)
       command: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.2/manifests/calico.yaml --validate=false
