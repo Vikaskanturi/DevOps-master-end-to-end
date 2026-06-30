@@ -20,7 +20,7 @@ variable "instanceTagName" {
 
 variable "sg_name" {
     type    = string
-    default = "webserver-sg"
+    default = "webserver1_sg"
 }
 
 variable "key_name" {

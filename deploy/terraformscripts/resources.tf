@@ -1,9 +1,9 @@
 resource "aws_instance" "web" {
-  depends_on = [aws_security_group.webserver_sg]
+  depends_on = [aws_security_group.webserver1_sg]
   ami           = data.aws_ami.latest_amazon_linux.id
   instance_type = var.instanceType
   key_name      = var.key_name
-  vpc_security_group_ids = [aws_security_group.webserver_sg.id]
+  vpc_security_group_ids = [aws_security_group.webserver1_sg.id]
   count = var.instance_count
 
   tags = {
@@ -17,7 +17,7 @@ resource "aws_instance" "web" {
 
 
 
-resource "aws_security_group" "webserver_sg" {
+resource "aws_security_group" "webserver1_sg" {
   name        = var.sg_name
   description = "Webserver Security Group for Kubernetes nodes"
   vpc_id      = data.aws_vpcs.default_vpc.ids[0]
